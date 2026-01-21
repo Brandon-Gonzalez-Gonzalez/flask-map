@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Tijuana Flask Map</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    
+    <!-- Fuente Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Poppins:wght@500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Iconos Phosphor -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#f0fdfa',
+                            100: '#ccfbf1',
+                            500: '#14b8a6', 
+                            600: '#0d9488',
+                            900: '#134e4a',
+                        },
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        display: ['Poppins', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
+        h1, h2, h3, button { font-family: 'Poppins', sans-serif; }
+        .cursor-crosshair { cursor: crosshair !important; }
+        
+        /* Scrollbar fina */
+        .scroller::-webkit-scrollbar { width: 4px; }
+        .scroller::-webkit-scrollbar-track { background: transparent; }
+        .scroller::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }
+        
+        .panel-transition { transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease; }
+        
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .animate-spin-fast { animation: spin 0.6s linear infinite; }
+
+        /* Estilo para las instrucciones de ruta */
+        .instruction-step:last-child .step-line { display: none; }
+        
+        /* Animación suave para iconos en mapa */
+        .map-icon-pop { animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+        @keyframes popIn {
+            from { opacity: 0; transform: scale(0); }
+            to { opacity: 1; transform: scale(1); }
+        }
+    </style>
+</head>
+<body class="h-screen w-full overflow-hidden bg-slate-100 flex flex-col md:flex-row relative">
+
+    <!-- 1. BARRA LATERAL IZQUIERDA -->
+    <aside class="absolute md:relative bottom-0 md:top-0 left-0 w-full md:w-[380px] h-[45vh] md:h-full z-[1000] flex flex-col pointer-events-none md:pointer-events-auto panel-transition transform translate-y-0">
+        <div class="pointer-events-auto h-full w-full bg-white md:border-r border-t md:border-t-0 border-slate-200 shadow-[0_-5px_20px_rgba(0,0,0,0.1)] md:shadow-none flex flex-col rounded-t-3xl md:rounded-none overflow-hidden">
+            
+            <div class="md:hidden w-full flex justify-center pt-3 pb-1" onclick="toggleMobileMenu()">
+                <div class="w-12 h-1.5 bg-slate-300 rounded-full"></div>
+            </div>
+
+            <div class="px-6 py-4 border-b border-slate-100 bg-white">
+                <div class="flex items-center gap-3 mb-1">
+                    <div class="p-2 bg-brand-100 text-brand-600 rounded-lg">
+                        <i class="ph-fill ph-map-pin-line text-xl"></i>
+                    </div>
+                    <h1 class="text-xl font-bold text-slate-800 tracking-tight">Tijuana Flask Map</h1>
+                </div>
+                <p class="text-xs text-slate-500 pl-1">Sistema de rutas por carretera</p>
+            </div>
+
+            <div class="p-4 grid grid-cols-2 gap-3 bg-slate-50/50">
+                <button id="btn-toggle-draw" onclick="toggleDrawingMode()" 
+                    class="col-span-2 py-3 px-4 bg-brand-600 hover:bg-brand-500 text-white rounded-xl font-semibold shadow-lg shadow-brand-500/20 transition-all flex items-center justify-center gap-2 active:scale-95">
+                    <i class="ph-bold ph-pencil-simple-line"></i>
+                    <span id="btn-text">Nueva Ruta</span>
+                </button>
+                <button onclick="downloadRoutes()" class="py-2.5 px-3 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 rounded-lg text-xs font-medium flex items-center justify-center gap-2">
+                    <i class="ph-bold ph-download-simple"></i> JSON
+                </button>
+                <button onclick="clearMapSelection()" class="py-2.5 px-3 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 rounded-lg text-xs font-medium flex items-center justify-center gap-2">
+                    <i class="ph-bold ph-eraser"></i> Limpiar
+                </button>
+            </div>
+
+            <div class="flex-1 overflow-y-auto scroller bg-white p-2">
+                <div class="px-4 py-2 flex justify-between items-end sticky top-0 bg-white z-10">
+                    <h2 class="text-xs font-bold text-slate-400 uppercase tracking-wider">Mis Viajes</h2>
+                    <span id="route-count" class="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-medium">0</span>
+                </div>
+                
+                <div id="routes-list" class="space-y-2 px-2 pb-20 md:pb-2">
+                    <div id="empty-state" class="flex flex-col items-center justify-center py-12 text-center opacity-50">
+                        <div class="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mb-3">
+                            <i class="ph-duotone ph-path text-3xl text-slate-400"></i>
+                        </div>
+                        <p class="text-sm font-medium text-slate-500">Sin rutas aún</p>
+                        <p class="text-xs text-slate-400 max-w-[150px]">Toca "Nueva Ruta" para planear tu viaje.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- 2. MAPA CENTRAL -->
+    <main class="flex-1 relative h-full w-full z-0 order-first md:order-none">
+        <!-- Header Dinámico de Estado -->
+        <div id="status-header" class="absolute top-4 left-4 right-4 md:left-20 md:right-auto md:w-[500px] z-[1000] hidden flex-col gap-2 transition-all duration-300">
+            <!-- Origen Card -->
+            <div id="status-origin" class="bg-white/95 backdrop-blur-sm border-l-4 border-emerald-500 shadow-lg rounded-r-lg p-3 flex items-center gap-3 transform translate-y-[-20px] opacity-0 transition-all duration-500">
+                <div class="bg-emerald-100 text-emerald-600 p-2 rounded-full">
+                    <i class="ph-bold ph-crosshair"></i>
+                </div>
+                <div>
+                    <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Punto de Salida</p>
+                    <p id="origin-text" class="text-sm font-semibold text-slate-700 truncate">Selecciona en el mapa...</p>
+                </div>
+            </div>
+            
+            <!-- Destino Card -->
+            <div id="status-dest" class="bg-white/95 backdrop-blur-sm border-l-4 border-red-500 shadow-lg rounded-r-lg p-3 flex items-center gap-3 transform translate-y-[-20px] opacity-0 transition-all duration-500">
+                <div class="bg-red-100 text-red-600 p-2 rounded-full">
+                    <i class="ph-bold ph-flag-checkered"></i>
+                </div>
+                <div>
+                    <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Punto de Destino</p>
+                    <p id="dest-text" class="text-sm font-semibold text-slate-700 truncate">Pendiente...</p>
+                </div>
+            </div>
+        </div>
+
+        <div id="map" class="w-full h-full outline-none bg-slate-200"></div>
+
+        <div id="toast" class="absolute top-20 left-1/2 transform -translate-x-1/2 z-[2000] pointer-events-none opacity-0 transition-opacity duration-300">
+            <div class="bg-slate-800/90 backdrop-blur text-white px-5 py-2.5 rounded-full shadow-xl flex items-center gap-3">
+                <i id="toast-icon" class="ph-fill ph-check-circle text-brand-400 text-lg"></i>
+                <span id="toast-message" class="text-sm font-medium">Notificación</span>
+            </div>
+        </div>
+
+        <!-- Botón Guardar Flotante -->
+        <div id="save-fab" class="absolute bottom-8 right-8 z-[1000] hidden transform translate-y-20 transition-transform duration-300">
+            <button onclick="openSaveModal()" 
+                class="bg-brand-600 hover:bg-brand-500 text-white px-6 py-4 rounded-full shadow-xl shadow-brand-900/30 font-bold flex items-center gap-3 transition-transform hover:scale-105 active:scale-95">
+                <i class="ph-bold ph-floppy-disk text-xl"></i>
+                Guardar Ruta
+            </button>
+        </div>
+    </main>
+
+    <!-- 3. PANEL DERECHO (Detalles e Indicaciones) -->
+    <aside id="details-panel" class="absolute top-0 right-0 h-full w-full md:w-[380px] z-[1100] bg-white shadow-2xl transform translate-x-full panel-transition flex flex-col md:border-l border-slate-200">
+        
+        <div class="p-5 bg-brand-600 text-white relative overflow-hidden">
+            <div class="absolute top-0 right-0 opacity-10 transform translate-x-1/4 -translate-y-1/4">
+                <i class="ph-fill ph-road-horizon text-[150px]"></i>
+            </div>
+            <button onclick="closeDetailsPanel()" class="absolute top-4 left-4 p-2 bg-white/10 hover:bg-white/20 rounded-full transition-colors backdrop-blur-sm z-10">
+                <i class="ph-bold ph-arrow-left text-white"></i>
+            </button>
+            <div class="mt-8 relative z-10">
+                <h2 id="detail-title" class="text-xl font-bold leading-tight">Nombre Ruta</h2>
+                <div class="flex items-center gap-2 mt-2 text-brand-100 text-sm">
+                    <i class="ph-fill ph-steering-wheel"></i>
+                    <span id="detail-subtitle">0 km • 0 min</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-2 border-b border-slate-100">
+            <div class="p-4 border-r border-slate-100 text-center">
+                <div class="text-xs text-slate-400 uppercase font-semibold mb-1">Distancia</div>
+                <div id="stat-distance" class="text-xl font-bold text-slate-700">0 km</div>
+            </div>
+            <div class="p-4 text-center">
+                <div class="text-xs text-slate-400 uppercase font-semibold mb-1">Duración</div>
+                <div id="stat-time" class="text-xl font-bold text-slate-700">0 min</div>
+            </div>
+        </div>
+
+        <div class="flex-1 overflow-y-auto scroller bg-slate-50">
+            <div class="p-4">
+                <h3 class="text-sm font-bold text-slate-800 mb-4 flex items-center gap-2 sticky top-0 bg-slate-50 py-2 z-10 border-b border-slate-100">
+                    <i class="ph-duotone ph-list-dashes text-brand-600"></i>
+                    Itinerario de Navegación
+                </h3>
+                
+                <div id="instructions-list" class="space-y-0 pt-2 pb-10">
+                    <!-- Aquí se inyectan las instrucciones -->
+                </div>
+            </div>
+        </div>
+        
+        <div class="p-4 bg-white border-t border-slate-100">
+            <button onclick="deleteCurrentRoute()" class="w-full py-3 text-red-500 hover:bg-red-50 rounded-xl font-medium transition-colors text-sm flex items-center justify-center gap-2">
+                <i class="ph-bold ph-trash"></i> Eliminar ruta
+            </button>
+        </div>
+    </aside>
+
+    <!-- MODAL GUARDAR -->
+    <div id="save-modal" class="fixed inset-0 z-[3000] bg-slate-900/60 backdrop-blur-sm hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 transform scale-100 transition-all animate-fade-in">
+            <h3 class="text-lg font-bold text-slate-800 mb-1">Confirmar Viaje</h3>
+            <p class="text-xs text-slate-500 mb-4">La ruta calculada se guardará en tu lista.</p>
+            
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Nombre Personalizado</label>
+                    <input type="text" id="route-name-input" 
+                        class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition-all text-slate-700 font-medium" 
+                        placeholder="Ej. Visita a la Tía">
+                </div>
+                
+                <div class="flex gap-3 pt-2">
+                    <button onclick="closeSaveModal()" class="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-medium transition-colors">
+                        Cancelar
+                    </button>
+                    <button onclick="confirmSaveRoute()" class="flex-1 py-3 bg-brand-600 hover:bg-brand-500 text-white rounded-xl font-bold shadow-lg shadow-brand-500/20 transition-colors">
+                        Guardar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script>
+        // --- 1. CONFIGURACIÓN ---
+        const TIJUANA_COORDS = [32.5149, -117.0382];
+        const map = L.map('map', { zoomControl: false }).setView(TIJUANA_COORDS, 13);
+        
+        L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; OpenStreetMap &copy; CARTO',
+            maxZoom: 20
+        }).addTo(map);
+
+        let isDrawing = false;
+        let points = []; 
+        let tempMarkers = [];
+        let currentRouteData = null; 
+        let savedRoutes = [];   
+        let activeRouteId = null;
+
+        const viewLayer = L.layerGroup().addTo(map);
+        const routeLayer = L.layerGroup().addTo(map);
+        const decorationsLayer = L.layerGroup().addTo(map); // Nueva capa para iconos
+
+        // --- 2. LÓGICA DE TRAZADO ---
+        function toggleDrawingMode() {
+            if (activeRouteId) closeDetailsPanel();
+            
+            isDrawing = !isDrawing;
+            updateUIState();
+        }
+
+        function updateUIState() {
+            const btn = document.getElementById('btn-toggle-draw');
+            const mapDiv = document.getElementById('map');
+            const statusHeader = document.getElementById('status-header');
+            const btnText = document.getElementById('btn-text');
+            const btnIcon = btn.querySelector('i');
+            const saveFab = document.getElementById('save-fab');
+
+            if (isDrawing) {
+                points = [];
+                tempMarkers.forEach(m => map.removeLayer(m));
+                tempMarkers = [];
+                routeLayer.clearLayers();
+                decorationsLayer.clearLayers(); // Limpiar decoraciones
+                currentRouteData = null;
+                
+                btn.classList.replace('bg-brand-600', 'bg-red-500');
+                btn.classList.replace('hover:bg-brand-500', 'hover:bg-red-600');
+                btnText.innerText = 'Cancelar';
+                btnIcon.classList.replace('ph-pencil-simple-line', 'ph-x');
+                
+                mapDiv.classList.add('cursor-crosshair');
+                
+                statusHeader.classList.remove('hidden');
+                statusHeader.classList.add('flex');
+                
+                document.getElementById('status-origin').classList.remove('opacity-100', 'translate-y-0');
+                document.getElementById('status-origin').classList.add('opacity-0', 'translate-y-[-20px]');
+                
+                document.getElementById('status-dest').classList.remove('opacity-100', 'translate-y-0');
+                document.getElementById('status-dest').classList.add('opacity-0', 'translate-y-[-20px]');
+                
+                saveFab.classList.add('hidden');
+                saveFab.classList.remove('translate-y-0');
+
+                showToast("Selecciona el Punto de Salida", "info");
+
+            } else {
+                btn.classList.replace('bg-red-500', 'bg-brand-600');
+                btn.classList.replace('hover:bg-red-600', 'hover:bg-brand-500');
+                btnText.innerText = 'Nueva Ruta';
+                btnIcon.classList.replace('ph-x', 'ph-pencil-simple-line');
+                
+                mapDiv.classList.remove('cursor-crosshair');
+                statusHeader.classList.add('hidden');
+                statusHeader.classList.remove('flex');
+                saveFab.classList.add('hidden');
+                
+                if(!currentRouteData) {
+                    tempMarkers.forEach(m => map.removeLayer(m));
+                    routeLayer.clearLayers();
+                    decorationsLayer.clearLayers();
+                }
+            }
+        }
+
+        map.on('click', async function(e) {
+            if (!isDrawing) return;
+            if (points.length >= 2) return;
+
+            const { lat, lng } = e.latlng;
+            points.push([lat, lng]);
+
+            const isStart = points.length === 1;
+            const color = isStart ? '#10b981' : '#ef4444'; 
+            
+            const marker = L.circleMarker([lat, lng], {
+                color: '#fff',
+                weight: 3,
+                fillColor: color,
+                fillOpacity: 1,
+                radius: 8
+            }).addTo(map);
+            tempMarkers.push(marker);
+
+            if (isStart) {
+                const originCard = document.getElementById('status-origin');
+                const originText = document.getElementById('origin-text');
+                
+                originCard.classList.remove('opacity-0', 'translate-y-[-20px]');
+                originCard.classList.add('opacity-100', 'translate-y-0');
+                originText.innerHTML = '<i class="ph-bold ph-spinner animate-spin-fast"></i> Detectando ubicación...';
+                
+                const address = await getAddressFromCoords(lat, lng);
+                originText.innerText = address;
+                
+                showToast("Ahora selecciona el Destino", "info");
+            } else {
+                const destCard = document.getElementById('status-dest');
+                const destText = document.getElementById('dest-text');
+                
+                destCard.classList.remove('opacity-0', 'translate-y-[-20px]');
+                destCard.classList.add('opacity-100', 'translate-y-0');
+                destText.innerHTML = '<i class="ph-bold ph-spinner animate-spin-fast"></i> Detectando ubicación...';
+                
+                const address = await getAddressFromCoords(lat, lng);
+                destText.innerText = address;
+
+                calculateRouteOSRM();
+            }
+        });
+
+        // --- 3. RUTEO OSRM ---
+        async function calculateRouteOSRM() {
+            if (points.length < 2) return;
+            
+            showToast("Calculando ruta por carretera...", "info");
+            
+            const start = points[0];
+            const end = points[1];
+            
+            const url = `https://router.project-osrm.org/route/v1/driving/${start[1]},${start[0]};${end[1]},${end[0]}?overview=full&geometries=geojson&steps=true`;
+
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (data.code !== 'Ok') throw new Error('No route found');
+
+                const route = data.routes[0];
+                const geometry = route.geometry;
+                const legs = route.legs[0];
+
+                const routeLine = L.geoJSON(geometry, {
+                    style: { color: '#3b82f6', weight: 6, opacity: 0.8 }
+                }).addTo(routeLayer);
+                
+                map.fitBounds(routeLine.getBounds(), { padding: [50, 50] });
+
+                // Renderizar decoraciones preliminares (semáforos/giros) en la vista previa
+                drawRouteDecorations(legs.steps, routeLayer);
+
+                currentRouteData = {
+                    geometry: geometry,
+                    distance: route.distance,
+                    duration: route.duration,
+                    steps: legs.steps, 
+                    originAddr: document.getElementById('origin-text').innerText,
+                    destAddr: document.getElementById('dest-text').innerText
+                };
+
+                const saveFab = document.getElementById('save-fab');
+                saveFab.classList.remove('hidden', 'translate-y-20');
+                saveFab.classList.add('translate-y-0');
+
+            } catch (error) {
+                console.error(error);
+                showToast("Error calculando ruta. Revisa tu conexión.", "error");
+            }
+        }
+
+        // --- NUEVO: Decoraciones en el Mapa (Semáforos) ---
+        function drawRouteDecorations(steps, layerGroup) {
+            if (!steps) return;
+            
+            steps.forEach((step, index) => {
+                // No poner icono en el inicio ni fin absoluto
+                if (index === 0 || index === steps.length - 1) return;
+                
+                const location = step.maneuver.location; // [lng, lat] de OSRM
+                // OSRM da [lng, lat], Leaflet usa [lat, lng]
+                const latlng = [location[1], location[0]];
+                
+                const type = step.maneuver.type;
+                const modifier = step.maneuver.modifier;
+                
+                let iconHtml = '';
+                let bgColor = '#f59e0b'; // Amber default (warning)
+
+                // Lógica simple para simular semáforos en giros
+                if (type === 'turn' || type === 'roundabout') {
+                    iconHtml = '<i class="ph-bold ph-traffic-signal text-white text-[10px]"></i>';
+                    bgColor = '#ef4444'; // Red para semáforo
+                } else {
+                    // Puntos intermedios simples
+                    iconHtml = '<i class="ph-bold ph-circle text-white text-[6px]"></i>';
+                    bgColor = '#3b82f6';
+                }
+
+                const markerHtml = `
+                    <div class="map-icon-pop w-5 h-5 rounded-full flex items-center justify-center shadow-md border border-white" style="background-color: ${bgColor}">
+                        ${iconHtml}
+                    </div>
+                `;
+
+                const icon = L.divIcon({
+                    className: 'bg-transparent',
+                    html: markerHtml,
+                    iconSize: [20, 20],
+                    iconAnchor: [10, 10]
+                });
+
+                L.marker(latlng, { icon: icon }).addTo(layerGroup);
+            });
+        }
+
+        // --- 4. PARSEO INSTRUCCIONES ---
+        function parseInstructions(steps) {
+            return steps.map(step => {
+                const dist = step.distance < 1000 
+                    ? `${Math.round(step.distance)} m` 
+                    : `${(step.distance / 1000).toFixed(1)} km`;
+                
+                let icon = 'ph-arrow-up';
+                let text = step.name ? `Continúa por <b>${step.name}</b>` : "Continúa el camino";
+                
+                const modifier = step.maneuver.modifier;
+                const type = step.maneuver.type;
+
+                if (type === 'depart') {
+                    text = "Salida desde el punto de origen";
+                    icon = 'ph-flag';
+                } else if (type === 'arrive') {
+                    text = "Has llegado a tu destino";
+                    icon = 'ph-flag-checkered';
+                    dist = ""; 
+                } else if (type === 'turn') {
+                    if (modifier && modifier.includes('left')) {
+                        text = step.name ? `Gira a la <b>izquierda</b> en ${step.name}` : "Gira a la <b>izquierda</b>";
+                        icon = 'ph-arrow-u-up-left';
+                    } else if (modifier && modifier.includes('right')) {
+                        text = step.name ? `Gira a la <b>derecha</b> en ${step.name}` : "Gira a la <b>derecha</b>";
+                        icon = 'ph-arrow-u-up-right';
+                    }
+                } else if (type === 'roundabout') {
+                    text = `En la rotonda, toma la salida hacia ${step.name || ''}`;
+                    icon = 'ph-arrows-clockwise';
+                }
+
+                return { text, dist, icon };
+            });
+        }
+
+        // --- 5. GUARDADO ---
+        function openSaveModal() {
+            if (!currentRouteData) return;
+            document.getElementById('save-modal').classList.remove('hidden');
+            setTimeout(() => document.getElementById('route-name-input').focus(), 100);
+        }
+
+        function closeSaveModal() {
+            document.getElementById('save-modal').classList.add('hidden');
+        }
+
+        function confirmSaveRoute() {
+            const nameInput = document.getElementById('route-name-input');
+            let name = nameInput.value.trim();
+            
+            if (!name) {
+                name = `Viaje a ${currentRouteData.destAddr.split(',')[0]}`;
+            }
+
+            const newRoute = {
+                id: Date.now(),
+                name: name,
+                originName: currentRouteData.originAddr,
+                destName: currentRouteData.destAddr,
+                color: getRandomColor(),
+                geometry: currentRouteData.geometry,
+                points: [...points], 
+                distance: currentRouteData.distance,
+                duration: currentRouteData.duration,
+                steps: currentRouteData.steps // IMPORTANTE: Guardar los pasos
+            };
+
+            savedRoutes.push(newRoute);
+            
+            closeSaveModal();
+            toggleDrawingMode(); 
+            renderRouteList();
+            showToast("Ruta guardada exitosamente");
+            
+            toggleViewRoute(newRoute.id);
+        }
+
+        // --- 6. GEOCODIFICACIÓN ---
+        function getTijuanaNeighborhood(lat, lng) {
+            if (lng < -117.11) return "Playas de Tijuana";
+            if (lat > 32.53 && lng > -117.05) return "Zona Centro";
+            if (lat > 32.52 && lng > -117.03) return "Zona Río";
+            if (lat > 32.53 && lng > -116.98) return "Otay";
+            if (lat < 32.50 && lat > 32.40) return "La Mesa";
+            if (lng > -116.90) return "Zona Este";
+            return "Tijuana";
+        }
+
+        async function getAddressFromCoords(lat, lng) {
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 2000);
+                const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=17&addressdetails=1`;
+                
+                const response = await fetch(url, { signal: controller.signal });
+                clearTimeout(timeoutId);
+                if (!response.ok) throw new Error();
+                
+                const data = await response.json();
+                const addr = data.address || {};
+                
+                const road = addr.road || addr.pedestrian;
+                const hood = addr.neighbourhood || addr.suburb || addr.hamlet || addr.quarter;
+                
+                if (road && hood) return `${road}, ${hood}`;
+                if (hood) return hood;
+                if (road) return road;
+                return getTijuanaNeighborhood(lat, lng); 
+                
+            } catch (e) {
+                return getTijuanaNeighborhood(lat, lng);
+            }
+        }
+
+        // --- 7. LISTADO Y DETALLES ---
+        function renderRouteList() {
+            const listContainer = document.getElementById('routes-list');
+            const count = document.getElementById('route-count');
+            
+            count.innerText = savedRoutes.length;
+            listContainer.innerHTML = '';
+
+            if (savedRoutes.length === 0) {
+                document.getElementById('empty-state').classList.remove('hidden'); 
+                listContainer.appendChild(document.getElementById('empty-state'));
+                return;
+            }
+
+            savedRoutes.forEach(route => {
+                const div = document.createElement('div');
+                const isSelected = route.id === activeRouteId;
+                const distKm = (route.distance / 1000).toFixed(1);
+                
+                div.className = `p-3 rounded-xl border cursor-pointer transition-all flex items-center justify-between group
+                    ${isSelected ? 'bg-brand-50 border-brand-200 shadow-sm' : 'bg-white border-slate-100 hover:border-brand-200'}`;
+                
+                div.onclick = () => toggleViewRoute(route.id);
+
+                div.innerHTML = `
+                    <div class="flex items-center gap-3 overflow-hidden">
+                        <div class="flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center" 
+                             style="background-color: ${isSelected ? route.color : '#f1f5f9'}; color: ${isSelected ? '#fff' : route.color}">
+                            <i class="ph-fill ph-road-horizon text-lg"></i>
+                        </div>
+                        <div class="truncate">
+                            <h4 class="font-semibold text-slate-700 text-sm truncate ${isSelected ? 'text-brand-700' : ''}">${route.name}</h4>
+                            <div class="flex items-center gap-2 text-xs text-slate-400">
+                                <span>${distKm} km</span>
+                            </div>
+                        </div>
+                    </div>
+                    <i class="ph-bold ${isSelected ? 'ph-caret-right text-brand-500' : 'ph-caret-right text-slate-300'}"></i>
+                `;
+                listContainer.appendChild(div);
+            });
+        }
+
+        function toggleViewRoute(id) {
+            if (activeRouteId === id) {
+                document.getElementById('details-panel').classList.remove('translate-x-full');
+            } else {
+                activeRouteId = id;
+                displayRouteOnMap(id);
+                renderRouteList(); 
+                showDetailsPanel(id);
+            }
+        }
+
+        function displayRouteOnMap(id) {
+            viewLayer.clearLayers();
+            decorationsLayer.clearLayers(); // Limpiar decoraciones previas
+
+            const route = savedRoutes.find(r => r.id === id);
+            if (!route) return;
+
+            const polyline = L.geoJSON(route.geometry, {
+                style: { color: route.color, weight: 6, opacity: 0.9, lineCap: 'round' }
+            }).addTo(viewLayer);
+
+            L.geoJSON(route.geometry, {
+                style: { color: 'white', weight: 9, opacity: 0.5, lineCap: 'round' }
+            }).addTo(viewLayer).bringToBack();
+
+            createCustomMarker(route.points[0], 'start');
+            createCustomMarker(route.points[1], 'end');
+
+            // --- AÑADIR DECORACIONES (Semáforos) AL CARGAR RUTA GUARDADA ---
+            drawRouteDecorations(route.steps, decorationsLayer);
+
+            map.flyToBounds(polyline.getBounds(), { padding: [80, 80], duration: 1.2 });
+        }
+
+        function createCustomMarker(latlng, type) {
+            const color = type === 'start' ? '#10b981' : '#ef4444'; 
+            const iconName = type === 'start' ? 'ph-crosshair' : 'ph-flag-checkered';
+            
+            const html = `
+                <div class="relative flex items-center justify-center">
+                    <div class="w-8 h-8 rounded-full border-2 border-white shadow-lg flex items-center justify-center text-white text-xs z-10" style="background-color: ${color}">
+                        <i class="ph-bold ${iconName}"></i>
+                    </div>
+                    <div class="absolute -bottom-1 w-2 h-2 bg-white transform rotate-45 border-r border-b border-slate-200"></div>
+                </div>
+            `;
+            const icon = L.divIcon({ className: 'bg-transparent', html: html, iconSize: [32, 32], iconAnchor: [16, 36] });
+            L.marker(latlng, { icon: icon }).addTo(viewLayer);
+        }
+
+        function showDetailsPanel(id) {
+            const route = savedRoutes.find(r => r.id === id);
+            if (!route) return;
+
+            const panel = document.getElementById('details-panel');
+            const list = document.getElementById('instructions-list');
+            
+            document.getElementById('detail-title').innerText = route.name;
+            
+            const distKm = (route.distance / 1000).toFixed(2);
+            const timeMin = Math.round(route.duration / 60); 
+
+            document.getElementById('stat-distance').innerText = `${distKm} km`;
+            document.getElementById('stat-time').innerText = `${timeMin} min`;
+            document.getElementById('detail-subtitle').innerText = `${route.originName} ➝ ${route.destName}`;
+
+            // --- BUG FIX: Limpiar lista antes de añadir ---
+            list.innerHTML = '';
+            
+            // Si por alguna razón no hay pasos, intentar recalcular o mostrar error
+            if (!route.steps || route.steps.length === 0) {
+                list.innerHTML = '<div class="text-sm text-gray-400 p-4">No hay instrucciones disponibles.</div>';
+                panel.classList.remove('translate-x-full');
+                return;
+            }
+
+            const parsedSteps = parseInstructions(route.steps);
+            
+            parsedSteps.forEach((step, index) => {
+                const item = document.createElement('div');
+                item.className = "instruction-step relative flex gap-4 pb-6";
+                item.innerHTML = `
+                    <div class="flex flex-col items-center">
+                        <div class="w-8 h-8 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center border border-slate-200 z-10">
+                            <i class="ph-bold ${step.icon}"></i>
+                        </div>
+                        <div class="step-line w-0.5 bg-slate-200 flex-1 my-1"></div>
+                    </div>
+                    <div class="flex-1 pt-1">
+                        <div class="text-sm text-slate-700 leading-snug">${step.text}</div>
+                        ${step.dist ? `<div class="text-xs font-bold text-brand-600 mt-1 bg-brand-50 inline-block px-2 py-0.5 rounded">${step.dist}</div>` : ''}
+                    </div>
+                `;
+                list.appendChild(item);
+            });
+
+            panel.classList.remove('translate-x-full');
+            if(window.innerWidth < 768) {
+                document.querySelector('aside').classList.add('translate-y-[85%]');
+            }
+        }
+
+        function closeDetailsPanel() {
+            document.getElementById('details-panel').classList.add('translate-x-full');
+            clearMapSelection();
+            document.querySelector('aside').classList.remove('translate-y-[85%]');
+        }
+
+        function clearMapSelection() {
+            activeRouteId = null;
+            viewLayer.clearLayers();
+            decorationsLayer.clearLayers(); // Limpiar decoraciones
+            renderRouteList();
+            document.getElementById('details-panel').classList.add('translate-x-full');
+        }
+
+        function deleteCurrentRoute() {
+            if(!activeRouteId) return;
+            if(confirm('¿Borrar ruta permanentemente?')) {
+                savedRoutes = savedRoutes.filter(r => r.id !== activeRouteId);
+                closeDetailsPanel();
+                renderRouteList();
+                showToast('Ruta eliminada');
+            }
+        }
+
+        function showToast(msg, type='success') {
+            const toast = document.getElementById('toast');
+            document.getElementById('toast-message').innerText = msg;
+            toast.classList.remove('opacity-0');
+            setTimeout(() => toast.classList.add('opacity-0'), 3000);
+        }
+
+        function downloadRoutes() {
+            if(savedRoutes.length === 0) return showToast('Nada que descargar', 'error');
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(savedRoutes));
+            const a = document.createElement('a');
+            a.href = dataStr;
+            a.download = "rutas_tijuana_osrm.json";
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+        }
+
+        function getRandomColor() {
+            const colors = ['#0ea5e9', '#8b5cf6', '#f59e0b', '#f43f5e', '#10b981', '#6366f1'];
+            return colors[Math.floor(Math.random() * colors.length)];
+        }
+        
+        function toggleMobileMenu() {
+            // Lógica simple para móvil si se requiere expansión manual
+        }
+        
+        // Enter save
+        document.getElementById('route-name-input').addEventListener('keypress', (e) => {
+            if(e.key === 'Enter') confirmSaveRoute();
+        });
+    </script>
+</body>
+</html>
